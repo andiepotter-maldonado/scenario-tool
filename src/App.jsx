@@ -307,6 +307,56 @@ export default function App() {
   };
   const clear = () => { setBudgets({}); setTotalBudget(""); };
 
+  const downloadCsv = (filename, csvContent) => {
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadSummary = () => {
+    const rows = [["Channel", "Spend", "Revenue", "Units", "ROI", "CPA", "Efficiency", "Saturation", "Confidence", "Funnel Level"]];
+    forecasts.filter(f => f.spend > 0).forEach(f => {
+      const roi = ((f.output - f.spend) / f.spend * 100);
+      rows.push([
+        CHANNEL_LABELS[f.channel] || f.channel,
+        f.spend.toFixed(2), f.output.toFixed(2), f.units.toFixed(2),
+        roi.toFixed(2) + "%", f.units > 0 ? f.cpa.toFixed(2) : "",
+        f.eff.toFixed(4), f.sat.toFixed(2) + "%", (f.conf * 100).toFixed(1) + "%",
+        BCP_LABELS[f.bcp] || f.bcp,
+      ]);
+    });
+    if (active.length > 1) {
+      rows.push(["Total", tSpend.toFixed(2), tOut.toFixed(2), tUnits.toFixed(2), tROI.toFixed(2) + "%", tUnits > 0 ? tCpa.toFixed(2) : "", (tOut / tSpend).toFixed(4), "", "", ""]);
+    }
+    downloadCsv(`scenario_summary_${geo}_${periodLabel.replace(/\s/g, "")}.csv`, rows.map(r => r.join(",")).join("\n"));
+  };
+
+  const downloadDetail = () => {
+    const rows = [["Channel", "Funnel", "Spend", "Revenue", "Units", "CPA", "ROI", "Confidence"]];
+    forecasts.filter(f => f.spend > 0).forEach(f => {
+      ["brand", "category", "product"].forEach(b => {
+        const curve = getCurve(f.channel, b);
+        const fd = f.funnelData[b];
+        if (curve && fd) {
+          const roi = ((fd.output - f.spend) / f.spend * 100);
+          rows.push([
+            CHANNEL_LABELS[f.channel] || f.channel,
+            BCP_LABELS[b],
+            f.spend.toFixed(2), fd.output.toFixed(2), fd.units.toFixed(2),
+            fd.units > 0 ? (f.spend / fd.units).toFixed(2) : "",
+            roi.toFixed(2) + "%",
+            (curve.confidence * 100).toFixed(1) + "%",
+          ]);
+        }
+      });
+    });
+    downloadCsv(`scenario_detail_${geo}_${periodLabel.replace(/\s/g, "")}.csv`, rows.map(r => r.join(",")).join("\n"));
+  };
+
   const confPct = c => (c * 100);
   const confBadge = c => {
     const p = confPct(c);
@@ -691,7 +741,18 @@ export default function App() {
                     </ResponsiveContainer>
                   </div>
 
-                  {/* Table */}
+                  {/* Table + Download */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>Detail Table</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={downloadSummary} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Be Vietnam Pro'", background: "#fff", color: "#1B1F27", border: "1px solid #E5E7EB" }}>
+                        Download Summary CSV
+                      </button>
+                      <button onClick={downloadDetail} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Be Vietnam Pro'", background: "#1B1F27", color: "#fff", border: "none" }}>
+                        Download by Funnel CSV
+                      </button>
+                    </div>
+                  </div>
                   <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                       <thead>
