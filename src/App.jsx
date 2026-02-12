@@ -144,19 +144,21 @@ export default function App() {
   const [expanded, setExpanded] = useState(null);
   const [tab, setTab] = useState("inputs");
   const [weeks, setWeeks] = useState(1);
+  const [disabled, setDisabled] = useState({});
 
   const periodLabel = PERIODS.find(p => p.weeks === weeks)?.label || `${weeks} Weeks`;
+  const toggleChannel = (ch) => setDisabled(p => ({ ...p, [ch]: !p[ch] }));
 
   const channels = useMemo(() => CURVE_DATA.filter(d => d.geography === geo).sort((a, b) => b.scaling_ratio - a.scaling_ratio), [geo]);
 
   const forecasts = useMemo(() => channels.map(ch => {
-    const totalSpend = parseFloat(budgets[ch.channel]) || 0;
+    const totalSpend = disabled[ch.channel] ? 0 : (parseFloat(budgets[ch.channel]) || 0);
     const weeklySpend = totalSpend / weeks;
     const weeklyOutput = hill(weeklySpend, ch.midpoint, ch.scaling_ratio, ch.slope);
     const o = weeklyOutput * weeks;
     const sat = ch.scaling_ratio > 0 ? (weeklyOutput / ch.scaling_ratio) * 100 : 0;
-    return { channel: ch.channel, spend: totalSpend, output: o, eff: totalSpend > 0 ? o / totalSpend : 0, sat, maxOut: ch.scaling_ratio, conf: ch.confidence };
-  }).sort((a, b) => b.output - a.output), [channels, budgets, weeks]);
+    return { channel: ch.channel, spend: totalSpend, output: o, eff: totalSpend > 0 ? o / totalSpend : 0, sat, maxOut: ch.scaling_ratio, conf: ch.confidence, disabled: !!disabled[ch.channel] };
+  }).sort((a, b) => b.output - a.output), [channels, budgets, weeks, disabled]);
 
   const tSpend = forecasts.reduce((a, f) => a + f.spend, 0);
   const tOut = forecasts.reduce((a, f) => a + f.output, 0);
@@ -168,16 +170,20 @@ export default function App() {
   const splitEven = () => {
     const t = parseFloat(totalBudget) || 0;
     if (t <= 0) return;
+    const enabled = channels.filter(ch => !disabled[ch.channel]);
+    if (enabled.length === 0) return;
     const b = {};
-    channels.forEach(ch => { b[ch.channel] = (t / channels.length).toFixed(0); });
+    channels.forEach(ch => { b[ch.channel] = disabled[ch.channel] ? "0" : (t / enabled.length).toFixed(0); });
     setBudgets(b);
   };
   const splitCurve = () => {
     const t = parseFloat(totalBudget) || 0;
     if (t <= 0) return;
-    const tm = channels.reduce((a, c) => a + c.max_spend, 0);
+    const enabled = channels.filter(ch => !disabled[ch.channel]);
+    if (enabled.length === 0) return;
+    const tm = enabled.reduce((a, c) => a + c.max_spend, 0);
     const b = {};
-    channels.forEach(ch => { b[ch.channel] = ((ch.max_spend / tm) * t).toFixed(0); });
+    channels.forEach(ch => { b[ch.channel] = disabled[ch.channel] ? "0" : ((ch.max_spend / tm) * t).toFixed(0); });
     setBudgets(b);
   };
   const clear = () => { setBudgets({}); setTotalBudget(""); };
@@ -274,7 +280,8 @@ export default function App() {
             <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 18 }}>Set spend per channel. Click "Show curve" to inspect the saturation curve.</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               {channels.map(ch => {
-                const totalSpend = parseFloat(budgets[ch.channel]) || 0;
+                const isDis = !!disabled[ch.channel];
+                const totalSpend = isDis ? 0 : (parseFloat(budgets[ch.channel]) || 0);
                 const weeklySpend = totalSpend / weeks;
                 const weeklyOutput = hill(weeklySpend, ch.midpoint, ch.scaling_ratio, ch.slope);
                 const o = weeklyOutput * weeks;
@@ -284,33 +291,45 @@ export default function App() {
                 const c = CHANNEL_COLORS[ch.channel] || "#6366F1";
 
                 return (
-                  <div key={ch.channel} style={{ background: "#fff", border: `1px solid ${s > 0 ? "#E8326E22" : "#E5E7EB"}`, borderRadius: 12, padding: "16px 20px" }}>
+                  <div key={ch.channel} style={{ background: "#fff", border: `1px solid ${isDis ? "#E5E7EB" : s > 0 ? "#E8326E22" : "#E5E7EB"}`, borderRadius: 12, padding: "16px 20px", opacity: isDis ? 0.5 : 1, transition: "opacity 0.2s" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <div style={{ width: 10, height: 10, borderRadius: 3, background: c }} />
                         <span style={{ fontSize: 14, fontWeight: 600 }}>{CHANNEL_LABELS[ch.channel] || ch.channel}</span>
                         <span style={confBadge(ch.confidence)}>Conf: {ch.confidence.toFixed(1)}</span>
                       </div>
-                      <button onClick={() => setExpanded(isExp ? null : ch.channel)} style={{ background: "none", border: "none", color: "#9CA3AF", cursor: "pointer", fontSize: 12, fontWeight: 500, fontFamily: "'Be Vietnam Pro'" }}>
-                        {isExp ? "Hide curve ▴" : "Show curve ▾"}
-                      </button>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <button onClick={() => setExpanded(isExp ? null : ch.channel)} style={{ background: "none", border: "none", color: "#9CA3AF", cursor: "pointer", fontSize: 12, fontWeight: 500, fontFamily: "'Be Vietnam Pro'" }}>
+                          {isExp ? "Hide curve ▴" : "Show curve ▾"}
+                        </button>
+                        <button onClick={() => toggleChannel(ch.channel)} style={{
+                          width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
+                          background: isDis ? "#E5E7EB" : "#059669", position: "relative", transition: "background 0.2s",
+                        }}>
+                          <div style={{
+                            width: 16, height: 16, borderRadius: 8, background: "#fff",
+                            position: "absolute", top: 2, left: isDis ? 2 : 18, transition: "left 0.2s",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                          }} />
+                        </button>
+                      </div>
                     </div>
 
                     <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 12 }}>
                       <div style={{ flex: 1 }}>
                         <label style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>Spend ($) — {periodLabel}</label>
-                        <input type="number" placeholder="0" value={budgets[ch.channel] || ""} onChange={e => set(ch.channel, e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#FAFBFC", color: "#1B1F27", fontSize: 14, fontFamily: "'Be Vietnam Pro'", outline: "none", width: "100%", boxSizing: "border-box", marginTop: 2 }} />
+                        <input type="number" placeholder="0" disabled={isDis} value={isDis ? "" : (budgets[ch.channel] || "")} onChange={e => set(ch.channel, e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E5E7EB", background: isDis ? "#F3F4F6" : "#FAFBFC", color: isDis ? "#9CA3AF" : "#1B1F27", fontSize: 14, fontFamily: "'Be Vietnam Pro'", outline: "none", width: "100%", boxSizing: "border-box", marginTop: 2 }} />
                       </div>
                       <div style={{ textAlign: "right", minWidth: 100 }}>
                         <div style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>Output</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: s > 0 ? "#1B1F27" : "#D1D5DB", marginTop: 2 }}>
-                          {s > 0 ? `$${fmtF(o)}` : "—"}
+                        <div style={{ fontSize: 18, fontWeight: 700, color: isDis ? "#D1D5DB" : s > 0 ? "#1B1F27" : "#D1D5DB", marginTop: 2 }}>
+                          {isDis ? "Excluded" : s > 0 ? `$${fmtF(o)}` : "—"}
                         </div>
                       </div>
                       <div style={{ textAlign: "right", minWidth: 48 }}>
                         <div style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>Sat%</div>
-                        <div style={{ fontSize: 15, fontWeight: 600, color: s > 0 ? satColor(sat) : "#D1D5DB", marginTop: 2 }}>
-                          {s > 0 ? `${sat.toFixed(0)}%` : "—"}
+                        <div style={{ fontSize: 15, fontWeight: 600, color: isDis ? "#D1D5DB" : s > 0 ? satColor(sat) : "#D1D5DB", marginTop: 2 }}>
+                          {isDis ? "—" : s > 0 ? `${sat.toFixed(0)}%` : "—"}
                         </div>
                       </div>
                     </div>
@@ -318,19 +337,16 @@ export default function App() {
                     <div style={{ height: 4, background: "#F1F2F4", borderRadius: 2, overflow: "hidden" }}>
                       <div style={{ height: "100%", width: `${Math.min(s > 0 ? sat : 0, 100)}%`, background: s > 0 ? satColor(sat) : "#F1F2F4", borderRadius: 2, transition: "width 0.3s" }} />
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-                      <span style={{ fontSize: 11, color: "#C4C9D2" }}>Midpoint: {fmt(ch.midpoint)}</span>
-                      <span style={{ fontSize: 11, color: "#C4C9D2" }}>Max observed: {fmt(ch.max_spend)}</span>
-                    </div>
 
                     {isExp && (
                       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #F1F2F4" }}>
                         <CurveChart channel={ch.channel} params={ch} currentSpend={weeklySpend} />
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: 10 }}>
                           {[
+                            { l: "Weekly Midpoint", v: fmt(ch.midpoint) },
+                            { l: "Weekly Max Spend", v: fmt(ch.max_spend) },
                             { l: "Scaling Ratio", v: fmtN(ch.scaling_ratio) },
                             { l: "Slope", v: ch.slope.toFixed(2) },
-                            { l: "Max Spend", v: fmt(ch.max_spend) },
                           ].map(p => (
                             <div key={p.l} style={{ background: "#FAFBFC", borderRadius: 8, padding: "8px 12px" }}>
                               <div style={{ fontSize: 10, color: "#9CA3AF", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>{p.l}</div>
