@@ -77,6 +77,14 @@ const CHANNEL_LABELS = {
 
 const GEOS = ["National", "NSW", "VIC", "QLD", "SA"];
 
+const PERIODS = [
+  { label: "1 Week", weeks: 1 },
+  { label: "4 Weeks", weeks: 4 },
+  { label: "3 Months", weeks: 13 },
+  { label: "6 Months", weeks: 26 },
+  { label: "12 Months", weeks: 52 },
+];
+
 function hill(spend, mid, scale, slope) {
   if (spend <= 0) return 0;
   const sp = Math.pow(spend, slope);
@@ -135,15 +143,20 @@ export default function App() {
   const [totalBudget, setTotalBudget] = useState("");
   const [expanded, setExpanded] = useState(null);
   const [tab, setTab] = useState("inputs");
+  const [weeks, setWeeks] = useState(1);
+
+  const periodLabel = PERIODS.find(p => p.weeks === weeks)?.label || `${weeks} Weeks`;
 
   const channels = useMemo(() => CURVE_DATA.filter(d => d.geography === geo).sort((a, b) => b.scaling_ratio - a.scaling_ratio), [geo]);
 
   const forecasts = useMemo(() => channels.map(ch => {
-    const s = parseFloat(budgets[ch.channel]) || 0;
-    const o = hill(s, ch.midpoint, ch.scaling_ratio, ch.slope);
-    const sat = ch.scaling_ratio > 0 ? (o / ch.scaling_ratio) * 100 : 0;
-    return { channel: ch.channel, spend: s, output: o, eff: s > 0 ? o / s : 0, sat, maxOut: ch.scaling_ratio, conf: ch.confidence };
-  }).sort((a, b) => b.output - a.output), [channels, budgets]);
+    const totalSpend = parseFloat(budgets[ch.channel]) || 0;
+    const weeklySpend = totalSpend / weeks;
+    const weeklyOutput = hill(weeklySpend, ch.midpoint, ch.scaling_ratio, ch.slope);
+    const o = weeklyOutput * weeks;
+    const sat = ch.scaling_ratio > 0 ? (weeklyOutput / ch.scaling_ratio) * 100 : 0;
+    return { channel: ch.channel, spend: totalSpend, output: o, eff: totalSpend > 0 ? o / totalSpend : 0, sat, maxOut: ch.scaling_ratio, conf: ch.confidence };
+  }).sort((a, b) => b.output - a.output), [channels, budgets, weeks]);
 
   const tSpend = forecasts.reduce((a, f) => a + f.spend, 0);
   const tOut = forecasts.reduce((a, f) => a + f.output, 0);
@@ -185,7 +198,17 @@ export default function App() {
         <span style={{ padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 500, background: "#1B1F27", color: "#fff" }}>Forecast</span>
         <span style={{ padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 500, background: "#F3F4F6", color: "#6B7280", border: "1px solid #E5E7EB" }}>Saturation Curves</span>
         <span style={{ padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 500, background: "#F3F4F6", color: "#6B7280", border: "1px solid #E5E7EB" }}>Portfolio: Powershop</span>
-        <div style={{ marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", gap: 0, background: "#F3F4F6", borderRadius: 8, padding: 2 }}>
+            {PERIODS.map(p => (
+              <button key={p.weeks} onClick={() => setWeeks(p.weeks)} style={{
+                padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: weeks === p.weeks ? 600 : 400,
+                background: weeks === p.weeks ? "#1B1F27" : "transparent",
+                color: weeks === p.weeks ? "#fff" : "#6B7280",
+                border: "none", cursor: "pointer", fontFamily: "'Be Vietnam Pro'", whiteSpace: "nowrap",
+              }}>{p.label}</button>
+            ))}
+          </div>
           <select value={geo} onChange={e => { setGeo(e.target.value); setBudgets({}); }} style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", fontSize: 13, fontFamily: "'Be Vietnam Pro'", color: "#1B1F27", cursor: "pointer", outline: "none", minWidth: 160 }}>
             {GEOS.map(g => <option key={g} value={g}>{g === "National" ? "All Geographies" : g}</option>)}
           </select>
@@ -209,17 +232,17 @@ export default function App() {
         {/* Summary row */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
           <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
-            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Spend</div>
+            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Spend ({periodLabel})</div>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em" }}>${fmtF(tSpend)}</div>
             <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>{active.length} of {channels.length} channels active</div>
           </div>
           <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
-            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Output</div>
+            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Output ({periodLabel})</div>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em" }}>${fmtF(tOut)}</div>
-            <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>Based on historical S-curves</div>
+            <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>Based on historical S-curves × {weeks} week{weeks > 1 ? "s" : ""}</div>
           </div>
           <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
-            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated ROI</div>
+            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated ROI ({periodLabel})</div>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", color: tSpend > 0 ? (tROI >= 0 ? "#059669" : "#DC2626") : "#1B1F27" }}>
               {tSpend > 0 ? `${tROI.toFixed(2)}%` : "—"}
             </div>
@@ -234,7 +257,7 @@ export default function App() {
             {/* Budget controls */}
             <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px", marginBottom: 24 }}>
               <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Budget Allocation</div>
-              <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 18 }}>Enter a total budget to auto-distribute, or set individual channel budgets below.</div>
+              <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 18 }}>Enter a total budget for {periodLabel.toLowerCase()} to auto-distribute, or set individual channel budgets below.</div>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
                 <div style={{ width: 200 }}>
                   <label style={{ fontSize: 12, color: "#9CA3AF", fontWeight: 500, display: "block", marginBottom: 4 }}>Total Budget</label>
@@ -251,9 +274,12 @@ export default function App() {
             <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 18 }}>Set spend per channel. Click "Show curve" to inspect the saturation curve.</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               {channels.map(ch => {
-                const s = parseFloat(budgets[ch.channel]) || 0;
-                const o = hill(s, ch.midpoint, ch.scaling_ratio, ch.slope);
-                const sat = ch.scaling_ratio > 0 ? (o / ch.scaling_ratio) * 100 : 0;
+                const totalSpend = parseFloat(budgets[ch.channel]) || 0;
+                const weeklySpend = totalSpend / weeks;
+                const weeklyOutput = hill(weeklySpend, ch.midpoint, ch.scaling_ratio, ch.slope);
+                const o = weeklyOutput * weeks;
+                const s = totalSpend;
+                const sat = ch.scaling_ratio > 0 ? (weeklyOutput / ch.scaling_ratio) * 100 : 0;
                 const isExp = expanded === ch.channel;
                 const c = CHANNEL_COLORS[ch.channel] || "#6366F1";
 
@@ -272,7 +298,7 @@ export default function App() {
 
                     <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 12 }}>
                       <div style={{ flex: 1 }}>
-                        <label style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>Spend ($)</label>
+                        <label style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>Spend ($) — {periodLabel}</label>
                         <input type="number" placeholder="0" value={budgets[ch.channel] || ""} onChange={e => set(ch.channel, e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#FAFBFC", color: "#1B1F27", fontSize: 14, fontFamily: "'Be Vietnam Pro'", outline: "none", width: "100%", boxSizing: "border-box", marginTop: 2 }} />
                       </div>
                       <div style={{ textAlign: "right", minWidth: 100 }}>
@@ -299,7 +325,7 @@ export default function App() {
 
                     {isExp && (
                       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #F1F2F4" }}>
-                        <CurveChart channel={ch.channel} params={ch} currentSpend={s} />
+                        <CurveChart channel={ch.channel} params={ch} currentSpend={weeklySpend} />
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 10 }}>
                           {[
                             { l: "Scaling Ratio", v: fmtN(ch.scaling_ratio) },
