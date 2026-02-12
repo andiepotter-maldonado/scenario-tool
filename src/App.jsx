@@ -85,9 +85,9 @@ const CURVE_DATA = [
 ];
 
 const BCP_PRIORITY = { product: 3, category: 2, brand: 1 };
-const BCP_LABELS = { brand: "Brand", category: "Consideration", product: "Conversion" };
+const BCP_LABELS = { brand: "Brand", category: "Consideration", product: "Conversion", all: "All (Total)" };
 const FUNNEL_OPTIONS = [
-  { value: "best", label: "All (Best)" },
+  { value: "best", label: "All (Total)" },
   { value: "brand", label: "Brand" },
   { value: "category", label: "Consideration" },
   { value: "product", label: "Conversion" },
@@ -239,43 +239,71 @@ export default function App() {
   const forecasts = useMemo(() => {
     return channelList.map(primary => {
       const chName = primary.channel;
-      const curve = getActiveCurve(chName);
       const isDis = !!disabled[chName];
       const totalSpend = isDis ? 0 : (parseFloat(budgets[chName]) || 0);
       const weeklySpend = totalSpend / weeks;
 
-      // Main output from active curve
-      let o = 0, sat = 0, conf = 0, bcp = "brand";
-      if (curve) {
-        const weeklyOutput = hill(weeklySpend, curve.midpoint, curve.scaling_ratio, curve.slope);
-        o = weeklyOutput * weeks;
-        sat = curve.scaling_ratio > 0 ? (weeklyOutput / curve.scaling_ratio) * 100 : 0;
-        conf = curve.confidence;
-        bcp = curve.bcp;
-      }
-
-      const units = o / REVENUE_PER_UNIT;
-      const cpa = units > 0 ? totalSpend / units : 0;
-
-      // Funnel breakdown: compute output at each available BCP level
+      // Calculate output for each available BCP level
       const funnelData = {};
+      let sumOutput = 0;
+      let sumWeightedConf = 0;
       ["brand", "category", "product"].forEach(b => {
         const c = getCurve(chName, b);
         if (c && totalSpend > 0) {
           const wo = hill(weeklySpend, c.midpoint, c.scaling_ratio, c.slope);
           const out = wo * weeks;
-          funnelData[b] = { output: out, units: out / REVENUE_PER_UNIT };
+          funnelData[b] = { output: out, units: out / REVENUE_PER_UNIT, confidence: c.confidence };
+          sumOutput += out;
+          sumWeightedConf += c.confidence * out;
         }
       });
+
+      // Add % share to funnel data
+      if (sumOutput > 0) {
+        Object.keys(funnelData).forEach(b => {
+          funnelData[b].share = (funnelData[b].output / sumOutput) * 100;
+        });
+      }
+
+      // Main output depends on funnel selection
+      let o, conf, bcp, sat;
+      if (funnel === "best") {
+        // "All (Total)": sum all BCP levels — brand + consideration + conversion = total revenue
+        o = sumOutput;
+        conf = sumOutput > 0 ? sumWeightedConf / sumOutput : (primary.confidence || 0);
+        bcp = "all";
+        // Use primary curve for saturation indicator
+        if (totalSpend > 0) {
+          const wo = hill(weeklySpend, primary.midpoint, primary.scaling_ratio, primary.slope);
+          sat = primary.scaling_ratio > 0 ? (wo / primary.scaling_ratio) * 100 : 0;
+        } else {
+          sat = 0;
+        }
+      } else {
+        // Single funnel level selected
+        const curve = getCurve(chName, funnel);
+        if (curve && totalSpend > 0) {
+          const wo = hill(weeklySpend, curve.midpoint, curve.scaling_ratio, curve.slope);
+          o = wo * weeks;
+          sat = curve.scaling_ratio > 0 ? (wo / curve.scaling_ratio) * 100 : 0;
+          conf = curve.confidence;
+          bcp = curve.bcp;
+        } else {
+          o = 0; sat = 0; conf = 0; bcp = funnel;
+        }
+      }
+
+      const units = o / REVENUE_PER_UNIT;
+      const cpa = units > 0 ? totalSpend / units : 0;
 
       return {
         channel: chName, spend: totalSpend, output: o, units, cpa,
         eff: totalSpend > 0 ? o / totalSpend : 0, sat, conf, bcp,
-        maxSpend: primary.max_spend, disabled: isDis, funnelData,
-        hasCurve: !!curve,
+        maxSpend: primary.max_spend, disabled: isDis, funnelData, sumOutput,
+        hasCurve: funnel === "best" ? (channelBcps[chName] || []).length > 0 : !!getCurve(chName, funnel),
       };
     }).sort((a, b) => b.output - a.output);
-  }, [channelList, budgets, weeks, disabled, getActiveCurve, getCurve]);
+  }, [channelList, budgets, weeks, disabled, funnel, getCurve, channelBcps]);
 
   const tSpend = forecasts.reduce((a, f) => a + f.spend, 0);
   const tOut = forecasts.reduce((a, f) => a + f.output, 0);
@@ -336,23 +364,32 @@ export default function App() {
   };
 
   const downloadDetail = () => {
-    const rows = [["Channel", "Funnel", "Spend", "Revenue", "Units", "CPA", "ROI", "Confidence"]];
+    const rows = [["Channel", "Funnel", "Spend", "Revenue", "Share of Channel Revenue", "Units", "CPA", "Confidence"]];
     forecasts.filter(f => f.spend > 0).forEach(f => {
       ["brand", "category", "product"].forEach(b => {
         const curve = getCurve(f.channel, b);
         const fd = f.funnelData[b];
         if (curve && fd) {
-          const roi = ((fd.output - f.spend) / f.spend * 100);
           rows.push([
             CHANNEL_LABELS[f.channel] || f.channel,
             BCP_LABELS[b],
-            f.spend.toFixed(2), fd.output.toFixed(2), fd.units.toFixed(2),
+            f.spend.toFixed(2), fd.output.toFixed(2),
+            fd.share ? fd.share.toFixed(1) + "%" : "",
+            fd.units.toFixed(2),
             fd.units > 0 ? (f.spend / fd.units).toFixed(2) : "",
-            roi.toFixed(2) + "%",
             (curve.confidence * 100).toFixed(1) + "%",
           ]);
         }
       });
+      // Add channel total row
+      if (f.sumOutput > 0) {
+        rows.push([
+          CHANNEL_LABELS[f.channel] || f.channel,
+          "TOTAL", f.spend.toFixed(2), f.sumOutput.toFixed(2), "100%",
+          (f.sumOutput / REVENUE_PER_UNIT).toFixed(2),
+          (f.spend / (f.sumOutput / REVENUE_PER_UNIT)).toFixed(2), "",
+        ]);
+      }
     });
     downloadCsv(`scenario_detail_${geo}_${periodLabel.replace(/\s/g, "")}.csv`, rows.map(r => r.join(",")).join("\n"));
   };
@@ -434,7 +471,7 @@ export default function App() {
             <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Revenue ({periodLabel})</div>
             <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em" }}>{fmtD(tOut)}</div>
             <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>
-              {funnel !== "best" ? `Funnel: ${BCP_LABELS[funnel]}` : "Best available funnel"} × {weeks}w
+              {funnel !== "best" ? `Funnel: ${BCP_LABELS[funnel]}` : "Sum of all funnel levels"} × {weeks}w
             </div>
           </div>
           <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
@@ -602,15 +639,17 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Funnel breakdown */}
+                              {/* Funnel breakdown — revenue decomposition */}
                               <div>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>Funnel Breakdown</div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 4 }}>Revenue Decomposition by Funnel</div>
+                                <div style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 8 }}>Same spend drives brand, consideration & conversion outcomes. These are additive components of total revenue.</div>
                                 {s > 0 ? (
                                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                                     <thead>
                                       <tr style={{ borderBottom: "1px solid #E5E7EB" }}>
                                         <th style={{ padding: "6px 10px", textAlign: "left", color: "#9CA3AF", fontWeight: 600 }}>Funnel</th>
                                         <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Revenue</th>
+                                        <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Share</th>
                                         <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Units</th>
                                         <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>CPA</th>
                                       </tr>
@@ -623,10 +662,12 @@ export default function App() {
                                           <tr key={b} style={{ borderBottom: "1px solid #F3F4F6" }}>
                                             <td style={{ padding: "6px 10px", fontWeight: 500 }}>
                                               {BCP_LABELS[b]}
-                                              {f.bcp === b && funnel === "best" && <span style={{ fontSize: 9, color: "#6366F1", marginLeft: 6 }}>ACTIVE</span>}
                                             </td>
                                             <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: available && fd ? "#1B1F27" : "#D1D5DB" }}>
                                               {available && fd ? fmtD(fd.output) : "N/A"}
+                                            </td>
+                                            <td style={{ padding: "6px 10px", textAlign: "right", color: available && fd ? "#6366F1" : "#D1D5DB", fontWeight: 600 }}>
+                                              {available && fd ? `${fd.share.toFixed(0)}%` : "—"}
                                             </td>
                                             <td style={{ padding: "6px 10px", textAlign: "right", color: available && fd ? "#1B1F27" : "#D1D5DB" }}>
                                               {available && fd ? fmtN(fd.units) : "N/A"}
@@ -637,6 +678,16 @@ export default function App() {
                                           </tr>
                                         );
                                       })}
+                                      {/* Total row */}
+                                      {f.sumOutput > 0 && (
+                                        <tr style={{ borderTop: "2px solid #E5E7EB", fontWeight: 700 }}>
+                                          <td style={{ padding: "6px 10px" }}>Total</td>
+                                          <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtD(f.sumOutput)}</td>
+                                          <td style={{ padding: "6px 10px", textAlign: "right", color: "#6366F1" }}>100%</td>
+                                          <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtN(f.sumOutput / REVENUE_PER_UNIT)}</td>
+                                          <td style={{ padding: "6px 10px", textAlign: "right", color: "#6B7280" }}>{fmtD(s / (f.sumOutput / REVENUE_PER_UNIT))}</td>
+                                        </tr>
+                                      )}
                                     </tbody>
                                   </table>
                                 ) : (
@@ -644,9 +695,6 @@ export default function App() {
                                     Enter spend to see funnel breakdown
                                   </div>
                                 )}
-                                <div style={{ marginTop: 10, fontSize: 11, color: "#9CA3AF" }}>
-                                  Available funnels: {bcps.map(b => BCP_LABELS[b]).join(", ")}
-                                </div>
                               </div>
                             </div>
                           </td>
@@ -677,7 +725,7 @@ export default function App() {
             <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px", marginBottom: 24 }}>
               <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Channel Breakdown</div>
               <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 20 }}>
-                Revenue and units estimated from S-curves at the {funnel === "best" ? "best available" : BCP_LABELS[funnel]} funnel level.
+                Revenue and units estimated from S-curves. {funnel === "best" ? "Total = sum of brand + consideration + conversion." : `Showing ${BCP_LABELS[funnel]} funnel only.`}
               </div>
 
               {active.length === 0 ? (
