@@ -364,7 +364,7 @@ export default function App() {
   };
 
   const downloadDetail = () => {
-    const rows = [["Channel", "Funnel", "Spend", "Revenue", "Share of Channel Revenue", "Units", "CPA", "Confidence"]];
+    const rows = [["Channel", "Funnel", "Revenue", "Share %", "Units", "Confidence", "Spend", "ROI", "CPA"]];
     forecasts.filter(f => f.spend > 0).forEach(f => {
       ["brand", "category", "product"].forEach(b => {
         const curve = getCurve(f.channel, b);
@@ -373,24 +373,33 @@ export default function App() {
           rows.push([
             CHANNEL_LABELS[f.channel] || f.channel,
             BCP_LABELS[b],
-            f.spend.toFixed(2), fd.output.toFixed(2),
+            fd.output.toFixed(2),
             fd.share ? fd.share.toFixed(1) + "%" : "",
             fd.units.toFixed(2),
-            fd.units > 0 ? (f.spend / fd.units).toFixed(2) : "",
             (curve.confidence * 100).toFixed(1) + "%",
+            "", "", "",
           ]);
         }
       });
-      // Add channel total row
+      // Channel total row with spend/ROI/CPA
       if (f.sumOutput > 0) {
+        const totalUnits = f.sumOutput / REVENUE_PER_UNIT;
+        const roi = ((f.sumOutput - f.spend) / f.spend * 100);
         rows.push([
           CHANNEL_LABELS[f.channel] || f.channel,
-          "TOTAL", f.spend.toFixed(2), f.sumOutput.toFixed(2), "100%",
-          (f.sumOutput / REVENUE_PER_UNIT).toFixed(2),
-          (f.spend / (f.sumOutput / REVENUE_PER_UNIT)).toFixed(2), "",
+          "TOTAL",
+          f.sumOutput.toFixed(2), "100%",
+          totalUnits.toFixed(2), "",
+          f.spend.toFixed(2),
+          roi.toFixed(2) + "%",
+          totalUnits > 0 ? (f.spend / totalUnits).toFixed(2) : "",
         ]);
       }
     });
+    // Grand total
+    if (active.length > 1) {
+      rows.push(["ALL CHANNELS", "TOTAL", tOut.toFixed(2), "100%", tUnits.toFixed(2), "", tSpend.toFixed(2), tROI.toFixed(2) + "%", tUnits > 0 ? tCpa.toFixed(2) : ""]);
+    }
     downloadCsv(`scenario_detail_${geo}_${periodLabel.replace(/\s/g, "")}.csv`, rows.map(r => r.join(",")).join("\n"));
   };
 
@@ -642,54 +651,77 @@ export default function App() {
                               {/* Funnel breakdown — revenue decomposition */}
                               <div>
                                 <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 4 }}>Revenue Decomposition by Funnel</div>
-                                <div style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 8 }}>Same spend drives brand, consideration & conversion outcomes. These are additive components of total revenue.</div>
+                                <div style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 8 }}>Same spend drives all funnel outcomes. Revenue below shows how the total decomposes across brand, consideration & conversion.</div>
                                 {s > 0 ? (
-                                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                                    <thead>
-                                      <tr style={{ borderBottom: "1px solid #E5E7EB" }}>
-                                        <th style={{ padding: "6px 10px", textAlign: "left", color: "#9CA3AF", fontWeight: 600 }}>Funnel</th>
-                                        <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Revenue</th>
-                                        <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Share</th>
-                                        <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Units</th>
-                                        <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>CPA</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {["brand", "category", "product"].map(b => {
-                                        const fd = f.funnelData[b];
-                                        const available = bcps.includes(b);
-                                        return (
-                                          <tr key={b} style={{ borderBottom: "1px solid #F3F4F6" }}>
-                                            <td style={{ padding: "6px 10px", fontWeight: 500 }}>
-                                              {BCP_LABELS[b]}
-                                            </td>
-                                            <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: available && fd ? "#1B1F27" : "#D1D5DB" }}>
-                                              {available && fd ? fmtD(fd.output) : "N/A"}
-                                            </td>
-                                            <td style={{ padding: "6px 10px", textAlign: "right", color: available && fd ? "#6366F1" : "#D1D5DB", fontWeight: 600 }}>
-                                              {available && fd ? `${fd.share.toFixed(0)}%` : "—"}
-                                            </td>
-                                            <td style={{ padding: "6px 10px", textAlign: "right", color: available && fd ? "#1B1F27" : "#D1D5DB" }}>
-                                              {available && fd ? fmtN(fd.units) : "N/A"}
-                                            </td>
-                                            <td style={{ padding: "6px 10px", textAlign: "right", color: available && fd ? "#6B7280" : "#D1D5DB" }}>
-                                              {available && fd && fd.units > 0 ? fmtD(s / fd.units) : "N/A"}
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-                                      {/* Total row */}
-                                      {f.sumOutput > 0 && (
-                                        <tr style={{ borderTop: "2px solid #E5E7EB", fontWeight: 700 }}>
-                                          <td style={{ padding: "6px 10px" }}>Total</td>
-                                          <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtD(f.sumOutput)}</td>
-                                          <td style={{ padding: "6px 10px", textAlign: "right", color: "#6366F1" }}>100%</td>
-                                          <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtN(f.sumOutput / REVENUE_PER_UNIT)}</td>
-                                          <td style={{ padding: "6px 10px", textAlign: "right", color: "#6B7280" }}>{fmtD(s / (f.sumOutput / REVENUE_PER_UNIT))}</td>
+                                  <>
+                                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                                      <thead>
+                                        <tr style={{ borderBottom: "1px solid #E5E7EB" }}>
+                                          <th style={{ padding: "6px 10px", textAlign: "left", color: "#9CA3AF", fontWeight: 600 }}>Funnel</th>
+                                          <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Revenue</th>
+                                          <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Share</th>
+                                          <th style={{ padding: "6px 10px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Units</th>
                                         </tr>
-                                      )}
-                                    </tbody>
-                                  </table>
+                                      </thead>
+                                      <tbody>
+                                        {["brand", "category", "product"].map(b => {
+                                          const fd = f.funnelData[b];
+                                          const available = bcps.includes(b);
+                                          return (
+                                            <tr key={b} style={{ borderBottom: "1px solid #F3F4F6" }}>
+                                              <td style={{ padding: "6px 10px", fontWeight: 500 }}>
+                                                {BCP_LABELS[b]}
+                                              </td>
+                                              <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: available && fd ? "#1B1F27" : "#D1D5DB" }}>
+                                                {available && fd ? fmtD(fd.output) : "N/A"}
+                                              </td>
+                                              <td style={{ padding: "6px 10px", textAlign: "right", color: available && fd ? "#6366F1" : "#D1D5DB", fontWeight: 600 }}>
+                                                {available && fd ? `${fd.share.toFixed(0)}%` : "—"}
+                                              </td>
+                                              <td style={{ padding: "6px 10px", textAlign: "right", color: available && fd ? "#1B1F27" : "#D1D5DB" }}>
+                                                {available && fd ? fmtN(fd.units) : "N/A"}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                        {/* Total row */}
+                                        {f.sumOutput > 0 && (
+                                          <tr style={{ borderTop: "2px solid #E5E7EB", fontWeight: 700 }}>
+                                            <td style={{ padding: "6px 10px" }}>Total</td>
+                                            <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtD(f.sumOutput)}</td>
+                                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#6366F1" }}>100%</td>
+                                            <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtN(f.sumOutput / REVENUE_PER_UNIT)}</td>
+                                          </tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                    {/* Channel-level metrics below the funnel table */}
+                                    {f.sumOutput > 0 && (() => {
+                                      const totalUnits = f.sumOutput / REVENUE_PER_UNIT;
+                                      const roi = ((f.sumOutput - s) / s * 100);
+                                      const cpa = totalUnits > 0 ? s / totalUnits : 0;
+                                      return (
+                                        <div style={{ display: "flex", gap: 16, marginTop: 10, padding: "8px 10px", background: "#fff", borderRadius: 6, border: "1px solid #E5E7EB" }}>
+                                          <div>
+                                            <div style={{ fontSize: 9, color: "#9CA3AF", fontWeight: 500, textTransform: "uppercase" }}>Spend</div>
+                                            <div style={{ fontSize: 12, fontWeight: 600 }}>{fmtD(s)}</div>
+                                          </div>
+                                          <div>
+                                            <div style={{ fontSize: 9, color: "#9CA3AF", fontWeight: 500, textTransform: "uppercase" }}>ROI</div>
+                                            <div style={{ fontSize: 12, fontWeight: 600, color: roi >= 0 ? "#059669" : "#DC2626" }}>{roi.toFixed(1)}%</div>
+                                          </div>
+                                          <div>
+                                            <div style={{ fontSize: 9, color: "#9CA3AF", fontWeight: 500, textTransform: "uppercase" }}>CPA</div>
+                                            <div style={{ fontSize: 12, fontWeight: 600 }}>{fmtD(cpa)}</div>
+                                          </div>
+                                          <div>
+                                            <div style={{ fontSize: 9, color: "#9CA3AF", fontWeight: 500, textTransform: "uppercase" }}>Efficiency</div>
+                                            <div style={{ fontSize: 12, fontWeight: 600 }}>{(f.sumOutput / s).toFixed(2)}x</div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+                                  </>
                                 ) : (
                                   <div style={{ padding: 20, textAlign: "center", color: "#C4C9D2", fontSize: 12 }}>
                                     Enter spend to see funnel breakdown
