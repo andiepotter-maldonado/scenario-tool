@@ -85,6 +85,9 @@ const PERIODS = [
   { label: "12 Months", weeks: 52 },
 ];
 
+// Derived from powershop spend data: total revenue $10,469,275.55 / total units 40,010.25
+const REVENUE_PER_UNIT = 261.66;
+
 function hill(spend, mid, scale, slope) {
   if (spend <= 0) return 0;
   const sp = Math.pow(spend, slope);
@@ -157,11 +160,13 @@ export default function App() {
     const weeklyOutput = hill(weeklySpend, ch.midpoint, ch.scaling_ratio, ch.slope);
     const o = weeklyOutput * weeks;
     const sat = ch.scaling_ratio > 0 ? (weeklyOutput / ch.scaling_ratio) * 100 : 0;
-    return { channel: ch.channel, spend: totalSpend, output: o, eff: totalSpend > 0 ? o / totalSpend : 0, sat, maxOut: ch.scaling_ratio, conf: ch.confidence, disabled: !!disabled[ch.channel] };
+    const units = o / REVENUE_PER_UNIT;
+    return { channel: ch.channel, spend: totalSpend, output: o, units, eff: totalSpend > 0 ? o / totalSpend : 0, sat, maxOut: ch.scaling_ratio, conf: ch.confidence, disabled: !!disabled[ch.channel] };
   }).sort((a, b) => b.output - a.output), [channels, budgets, weeks, disabled]);
 
   const tSpend = forecasts.reduce((a, f) => a + f.spend, 0);
   const tOut = forecasts.reduce((a, f) => a + f.output, 0);
+  const tUnits = forecasts.reduce((a, f) => a + f.units, 0);
   const tROI = tSpend > 0 ? ((tOut - tSpend) / tSpend * 100) : 0;
   const active = forecasts.filter(f => f.spend > 0);
 
@@ -188,11 +193,15 @@ export default function App() {
   };
   const clear = () => { setBudgets({}); setTotalBudget(""); };
 
-  const confBadge = c => ({
-    fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 500, display: "inline-block",
-    background: c >= 3 ? "#ECFDF5" : c >= 1.5 ? "#FFFBEB" : "#FEF2F2",
-    color: c >= 3 ? "#059669" : c >= 1.5 ? "#D97706" : "#DC2626",
-  });
+  const confPct = c => (c * 100);
+  const confBadge = c => {
+    const p = confPct(c);
+    return {
+      fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 500, display: "inline-block",
+      background: p >= 300 ? "#ECFDF5" : p >= 150 ? "#FFFBEB" : "#FEF2F2",
+      color: p >= 300 ? "#059669" : p >= 150 ? "#D97706" : "#DC2626",
+    };
+  };
   const satColor = p => p > 80 ? "#DC2626" : p > 50 ? "#D97706" : "#059669";
 
   return (
@@ -236,16 +245,23 @@ export default function App() {
 
       <div style={{ padding: "24px 32px", maxWidth: 1240 }}>
         {/* Summary row */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
           <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
             <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Spend ({periodLabel})</div>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em" }}>${fmtF(tSpend)}</div>
             <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>{active.length} of {channels.length} channels active</div>
           </div>
           <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
-            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Output ({periodLabel})</div>
+            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Revenue ({periodLabel})</div>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em" }}>${fmtF(tOut)}</div>
             <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>Based on historical S-curves × {weeks} week{weeks > 1 ? "s" : ""}</div>
+          </div>
+          <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
+            <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Est. Units ({periodLabel})</div>
+            <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em" }}>{tSpend > 0 ? fmtN(tUnits) : "—"}</div>
+            <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>
+              {tSpend > 0 ? `@ $${REVENUE_PER_UNIT.toFixed(0)} avg revenue/unit` : "Derived from revenue"}
+            </div>
           </div>
           <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
             <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated ROI ({periodLabel})</div>
@@ -296,7 +312,7 @@ export default function App() {
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <div style={{ width: 10, height: 10, borderRadius: 3, background: c }} />
                         <span style={{ fontSize: 14, fontWeight: 600 }}>{CHANNEL_LABELS[ch.channel] || ch.channel}</span>
-                        <span style={confBadge(ch.confidence)}>Conf: {ch.confidence.toFixed(1)}</span>
+                        <span style={confBadge(ch.confidence)}>Conf: {confPct(ch.confidence).toFixed(0)}%</span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <button onClick={() => setExpanded(isExp ? null : ch.channel)} style={{ background: "none", border: "none", color: "#9CA3AF", cursor: "pointer", fontSize: 12, fontWeight: 500, fontFamily: "'Be Vietnam Pro'" }}>
@@ -321,9 +337,15 @@ export default function App() {
                         <input type="number" placeholder="0" disabled={isDis} value={isDis ? "" : (budgets[ch.channel] || "")} onChange={e => set(ch.channel, e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E5E7EB", background: isDis ? "#F3F4F6" : "#FAFBFC", color: isDis ? "#9CA3AF" : "#1B1F27", fontSize: 14, fontFamily: "'Be Vietnam Pro'", outline: "none", width: "100%", boxSizing: "border-box", marginTop: 2 }} />
                       </div>
                       <div style={{ textAlign: "right", minWidth: 100 }}>
-                        <div style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>Output</div>
+                        <div style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>Revenue</div>
                         <div style={{ fontSize: 18, fontWeight: 700, color: isDis ? "#D1D5DB" : s > 0 ? "#1B1F27" : "#D1D5DB", marginTop: 2 }}>
                           {isDis ? "Excluded" : s > 0 ? `$${fmtF(o)}` : "—"}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", minWidth: 56 }}>
+                        <div style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>Units</div>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: isDis ? "#D1D5DB" : s > 0 ? "#1B1F27" : "#D1D5DB", marginTop: 2 }}>
+                          {isDis ? "—" : s > 0 ? (o / REVENUE_PER_UNIT).toFixed(0) : "—"}
                         </div>
                       </div>
                       <div style={{ textAlign: "right", minWidth: 48 }}>
@@ -394,9 +416,13 @@ export default function App() {
                               <div style={{ fontSize: 11, color: "#9CA3AF" }}>Spend</div>
                               <div style={{ fontSize: 13, fontWeight: 600 }}>${fmtF(f.spend)} ({sp.toFixed(0)}%)</div>
                             </div>
-                            <div style={{ textAlign: "right" }}>
-                              <div style={{ fontSize: 11, color: "#9CA3AF" }}>Output</div>
+                            <div style={{ textAlign: "center" }}>
+                              <div style={{ fontSize: 11, color: "#9CA3AF" }}>Revenue</div>
                               <div style={{ fontSize: 13, fontWeight: 600 }}>${fmtF(f.output)} ({op.toFixed(0)}%)</div>
+                            </div>
+                            <div style={{ textAlign: "right" }}>
+                              <div style={{ fontSize: 11, color: "#9CA3AF" }}>Units</div>
+                              <div style={{ fontSize: 13, fontWeight: 600 }}>{f.units.toFixed(0)}</div>
                             </div>
                           </div>
                         </div>
@@ -427,7 +453,7 @@ export default function App() {
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                       <thead>
                         <tr style={{ background: "#FAFBFC", borderBottom: "1px solid #E5E7EB" }}>
-                          {["Channel", "Spend", "Output", "ROI", "Efficiency", "Saturation", "Confidence"].map(h => (
+                          {["Channel", "Spend", "Revenue", "Units", "ROI", "Efficiency", "Saturation", "Confidence"].map(h => (
                             <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 12, fontWeight: 600, color: "#9CA3AF" }}>{h}</th>
                           ))}
                         </tr>
@@ -443,6 +469,7 @@ export default function App() {
                               </td>
                               <td style={{ padding: "10px 16px", color: "#6B7280" }}>${fmtF(f.spend)}</td>
                               <td style={{ padding: "10px 16px", fontWeight: 600 }}>${fmtF(f.output)}</td>
+                              <td style={{ padding: "10px 16px", fontWeight: 600 }}>{f.units.toFixed(0)}</td>
                               <td style={{ padding: "10px 16px", fontWeight: 600, color: roi >= 0 ? "#059669" : "#DC2626" }}>{roi.toFixed(2)}%</td>
                               <td style={{ padding: "10px 16px", color: "#6B7280" }}>{f.eff.toFixed(3)}</td>
                               <td style={{ padding: "10px 16px" }}>
@@ -453,7 +480,7 @@ export default function App() {
                                   <span style={{ fontSize: 12, fontWeight: 600, color: satColor(f.sat) }}>{f.sat.toFixed(0)}%</span>
                                 </div>
                               </td>
-                              <td style={{ padding: "10px 16px" }}><span style={confBadge(f.conf)}>{f.conf.toFixed(1)}</span></td>
+                              <td style={{ padding: "10px 16px" }}><span style={confBadge(f.conf)}>{confPct(f.conf).toFixed(0)}%</span></td>
                             </tr>
                           );
                         })}
@@ -462,6 +489,7 @@ export default function App() {
                             <td style={{ padding: "10px 16px" }}>Total</td>
                             <td style={{ padding: "10px 16px" }}>${fmtF(tSpend)}</td>
                             <td style={{ padding: "10px 16px" }}>${fmtF(tOut)}</td>
+                            <td style={{ padding: "10px 16px" }}>{tUnits.toFixed(0)}</td>
                             <td style={{ padding: "10px 16px", color: tROI >= 0 ? "#059669" : "#DC2626" }}>{tROI.toFixed(2)}%</td>
                             <td style={{ padding: "10px 16px" }}>{(tOut / tSpend).toFixed(3)}</td>
                             <td colSpan={2} />
