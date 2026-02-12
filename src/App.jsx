@@ -86,12 +86,6 @@ const CURVE_DATA = [
 
 const BCP_PRIORITY = { product: 3, category: 2, brand: 1 };
 const BCP_LABELS = { brand: "Brand", category: "Consideration", product: "Conversion" };
-const FUNNEL_OPTIONS = [
-  { value: "best", label: "Best Available" },
-  { value: "brand", label: "Brand" },
-  { value: "category", label: "Consideration" },
-  { value: "product", label: "Conversion" },
-];
 
 const CHANNEL_COLORS = {
   bvod: "#6366F1", digital_audio: "#8B5CF6", display: "#F59E0B",
@@ -196,7 +190,6 @@ export default function App() {
   const [tab, setTab] = useState("inputs");
   const [weeks, setWeeks] = useState(1);
   const [disabled, setDisabled] = useState({});
-  const [funnel, setFunnel] = useState("best");
 
   const periodLabel = PERIODS.find(p => p.weeks === weeks)?.label || `${weeks} Weeks`;
   const toggleChannel = (ch) => setDisabled(p => ({ ...p, [ch]: !p[ch] }));
@@ -215,26 +208,10 @@ export default function App() {
     return Object.values(map).sort((a, b) => b.scaling_ratio - a.scaling_ratio);
   }, [allCurves]);
 
-  // Get curve for channel at specific BCP level
-  const getCurve = useCallback((channel, bcp) => allCurves.find(c => c.channel === channel && c.bcp === bcp), [allCurves]);
-
-  // Get the active curve for a channel based on funnel selection
+  // Get the best (most specific) curve for a channel
   const getActiveCurve = useCallback((channel) => {
-    if (funnel === "best") {
-      return channelList.find(c => c.channel === channel);
-    }
-    return getCurve(channel, funnel) || null;
-  }, [funnel, channelList, getCurve]);
-
-  // Available BCP levels per channel
-  const channelBcps = useMemo(() => {
-    const map = {};
-    allCurves.forEach(c => {
-      if (!map[c.channel]) map[c.channel] = [];
-      if (!map[c.channel].includes(c.bcp)) map[c.channel].push(c.bcp);
-    });
-    return map;
-  }, [allCurves]);
+    return channelList.find(c => c.channel === channel) || null;
+  }, [channelList]);
 
   const forecasts = useMemo(() => {
     return channelList.map(primary => {
@@ -260,35 +237,14 @@ export default function App() {
       const units = o / REVENUE_PER_UNIT;
       const cpa = units > 0 ? totalSpend / units : 0;
 
-      // Funnel comparison: each BCP level is an independent model with its own metrics
-      const funnelData = {};
-      ["brand", "category", "product"].forEach(b => {
-        const c = getCurve(chName, b);
-        if (c) {
-          let fOut = 0, fSat = 0;
-          if (totalSpend > 0) {
-            const wo = hill(weeklySpend, c.midpoint, c.scaling_ratio, c.slope);
-            fOut = wo * weeks;
-            fSat = c.scaling_ratio > 0 ? (wo / c.scaling_ratio) * 100 : 0;
-          }
-          const fUnits = fOut / REVENUE_PER_UNIT;
-          funnelData[b] = {
-            output: fOut, units: fUnits,
-            cpa: fUnits > 0 ? totalSpend / fUnits : 0,
-            roi: totalSpend > 0 ? ((fOut - totalSpend) / totalSpend * 100) : 0,
-            sat: fSat, confidence: c.confidence,
-          };
-        }
-      });
-
       return {
         channel: chName, spend: totalSpend, output: o, units, cpa,
         eff: totalSpend > 0 ? o / totalSpend : 0, sat, conf, bcp,
-        maxSpend: primary.max_spend, disabled: isDis, funnelData,
+        maxSpend: primary.max_spend, disabled: isDis,
         hasCurve: !!curve,
       };
     }).sort((a, b) => b.output - a.output);
-  }, [channelList, budgets, weeks, disabled, getActiveCurve, getCurve]);
+  }, [channelList, budgets, weeks, disabled, getActiveCurve]);
 
   const tSpend = forecasts.reduce((a, f) => a + f.spend, 0);
   const tOut = forecasts.reduce((a, f) => a + f.output, 0);
@@ -348,26 +304,6 @@ export default function App() {
     downloadCsv(`scenario_summary_${geo}_${periodLabel.replace(/\s/g, "")}.csv`, rows.map(r => r.join(",")).join("\n"));
   };
 
-  const downloadDetail = () => {
-    const rows = [["Channel", "Funnel", "Spend", "Revenue", "Units", "ROI", "CPA", "Saturation", "Confidence"]];
-    forecasts.filter(f => f.spend > 0).forEach(f => {
-      ["brand", "category", "product"].forEach(b => {
-        const fd = f.funnelData[b];
-        if (fd) {
-          rows.push([
-            CHANNEL_LABELS[f.channel] || f.channel,
-            BCP_LABELS[b],
-            f.spend.toFixed(2), fd.output.toFixed(2), fd.units.toFixed(2),
-            fd.output > 0 ? fd.roi.toFixed(2) + "%" : "",
-            fd.units > 0 ? fd.cpa.toFixed(2) : "",
-            fd.sat.toFixed(2) + "%",
-            (fd.confidence * 100).toFixed(1) + "%",
-          ]);
-        }
-      });
-    });
-    downloadCsv(`scenario_detail_${geo}_${periodLabel.replace(/\s/g, "")}.csv`, rows.map(r => r.join(",")).join("\n"));
-  };
 
   const confPct = c => (c * 100);
   const confBadge = c => {
@@ -393,17 +329,6 @@ export default function App() {
         <span style={{ padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 500, background: "#F3F4F6", color: "#6B7280", border: "1px solid #E5E7EB" }}>Saturation Curves</span>
         <span style={{ padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 500, background: "#F3F4F6", color: "#6B7280", border: "1px solid #E5E7EB" }}>Portfolio: Powershop</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-          {/* Funnel selector */}
-          <div style={{ display: "flex", gap: 0, background: "#F3F4F6", borderRadius: 8, padding: 2 }}>
-            {FUNNEL_OPTIONS.map(f => (
-              <button key={f.value} onClick={() => setFunnel(f.value)} style={{
-                padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: funnel === f.value ? 600 : 400,
-                background: funnel === f.value ? "#6366F1" : "transparent",
-                color: funnel === f.value ? "#fff" : "#6B7280",
-                border: "none", cursor: "pointer", fontFamily: "'Be Vietnam Pro'", whiteSpace: "nowrap",
-              }}>{f.label}</button>
-            ))}
-          </div>
           {/* Period selector */}
           <div style={{ display: "flex", gap: 0, background: "#F3F4F6", borderRadius: 8, padding: 2 }}>
             {PERIODS.map(p => (
@@ -446,7 +371,7 @@ export default function App() {
             <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 4 }}>Simulated Revenue ({periodLabel})</div>
             <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em" }}>{fmtD(tOut)}</div>
             <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>
-              {funnel !== "best" ? `Funnel: ${BCP_LABELS[funnel]}` : "Best available funnel"} × {weeks}w
+              S-curve model × {weeks}w
             </div>
           </div>
           <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px" }}>
@@ -519,7 +444,6 @@ export default function App() {
                     const s = f.spend;
                     const isExp = expanded === ch.channel;
                     const c = CHANNEL_COLORS[ch.channel] || "#6366F1";
-                    const bcps = channelBcps[ch.channel] || [];
 
                     return [
                       <tr key={ch.channel} style={{ borderBottom: isExp ? "none" : "1px solid #F3F4F6", opacity: isDis ? 0.5 : 1, transition: "opacity 0.2s" }}>
@@ -541,9 +465,6 @@ export default function App() {
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <div style={{ width: 8, height: 8, borderRadius: 2, background: c, flexShrink: 0 }} />
                             <span style={{ fontWeight: 600, fontSize: 13 }}>{CHANNEL_LABELS[ch.channel] || ch.channel}</span>
-                            {funnel !== "best" && !f.hasCurve && (
-                              <span style={{ fontSize: 10, color: "#D97706", background: "#FFFBEB", padding: "1px 6px", borderRadius: 10 }}>No {BCP_LABELS[funnel]} data</span>
-                            )}
                           </div>
                         </td>
                         {/* Spend input */}
@@ -594,84 +515,24 @@ export default function App() {
                       isExp && (
                         <tr key={ch.channel + "-exp"} style={{ borderBottom: "1px solid #F3F4F6" }}>
                           <td colSpan={9} style={{ padding: "0 20px 16px 20px", background: "#FAFBFC" }}>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 12 }}>
-                              {/* Curve chart */}
-                              <div>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>Saturation Curve (Weekly)</div>
-                                <CurveChart channel={ch.channel} params={ch} currentSpend={s / weeks} />
-                                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 10 }}>
-                                  {[
-                                    { l: "Weekly Midpoint", v: fmtAxis(ch.midpoint) },
-                                    { l: "Weekly Max Spend", v: fmtAxis(ch.max_spend) },
-                                    { l: "Scaling Ratio", v: fmtAxisN(ch.scaling_ratio) },
-                                    { l: "Slope", v: ch.slope.toFixed(2) },
-                                  ].map(p => (
-                                    <div key={p.l} style={{ background: "#fff", borderRadius: 6, padding: "6px 10px", border: "1px solid #E5E7EB" }}>
-                                      <div style={{ fontSize: 9, color: "#9CA3AF", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>{p.l}</div>
-                                      <div style={{ fontSize: 12, fontWeight: 600, color: "#5A5F6B", marginTop: 1 }}>{p.v}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-
-                              {/* Funnel comparison — independent models */}
-                              <div>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 4 }}>Impact by Funnel Level</div>
-                                <div style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 8 }}>Each level is an independent model of where spend has impact. Brand & category can halo down the funnel.</div>
-                                {s > 0 ? (
-                                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                                    <thead>
-                                      <tr style={{ borderBottom: "1px solid #E5E7EB" }}>
-                                        <th style={{ padding: "6px 8px", textAlign: "left", color: "#9CA3AF", fontWeight: 600 }}>Funnel</th>
-                                        <th style={{ padding: "6px 8px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Revenue</th>
-                                        <th style={{ padding: "6px 8px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>ROI</th>
-                                        <th style={{ padding: "6px 8px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Saturation</th>
-                                        <th style={{ padding: "6px 8px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>CPA</th>
-                                        <th style={{ padding: "6px 8px", textAlign: "right", color: "#9CA3AF", fontWeight: 600 }}>Conf</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {["brand", "category", "product"].map(b => {
-                                        const fd = f.funnelData[b];
-                                        const isActive = f.bcp === b;
-                                        return (
-                                          <tr key={b} style={{ borderBottom: "1px solid #F3F4F6", background: isActive ? "#F5F3FF" : "transparent" }}>
-                                            <td style={{ padding: "6px 8px", fontWeight: 500 }}>
-                                              {BCP_LABELS[b]}
-                                              {isActive && <span style={{ fontSize: 9, color: "#6366F1", marginLeft: 6, fontWeight: 700 }}>ACTIVE</span>}
-                                            </td>
-                                            <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600, color: fd ? "#1B1F27" : "#D1D5DB" }}>
-                                              {fd ? fmtD(fd.output) : "N/A"}
-                                            </td>
-                                            <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600, color: fd ? (fd.roi >= 0 ? "#059669" : "#DC2626") : "#D1D5DB" }}>
-                                              {fd && fd.output > 0 ? `${fd.roi.toFixed(1)}%` : "N/A"}
-                                            </td>
-                                            <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                                              {fd && fd.output > 0 ? (
-                                                <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                                  <div style={{ width: 36, height: 4, background: "#F1F2F4", borderRadius: 2, overflow: "hidden" }}>
-                                                    <div style={{ height: "100%", width: `${Math.min(fd.sat, 100)}%`, background: satColor(fd.sat), borderRadius: 2 }} />
-                                                  </div>
-                                                  <span style={{ fontSize: 11, fontWeight: 600, color: satColor(fd.sat) }}>{fd.sat.toFixed(0)}%</span>
-                                                </div>
-                                              ) : <span style={{ color: "#D1D5DB" }}>N/A</span>}
-                                            </td>
-                                            <td style={{ padding: "6px 8px", textAlign: "right", color: fd && fd.units > 0 ? "#6B7280" : "#D1D5DB" }}>
-                                              {fd && fd.units > 0 ? fmtD(fd.cpa) : "N/A"}
-                                            </td>
-                                            <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                                              {fd ? <span style={confBadge(fd.confidence)}>{confPct(fd.confidence).toFixed(0)}%</span> : <span style={{ color: "#D1D5DB" }}>—</span>}
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                ) : (
-                                  <div style={{ padding: 20, textAlign: "center", color: "#C4C9D2", fontSize: 12 }}>
-                                    Enter spend to see funnel comparison
+                            <div style={{ maxWidth: 600, marginTop: 12 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>Saturation Curve (Weekly)</div>
+                              <CurveChart channel={ch.channel} params={ch} currentSpend={s / weeks} />
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 10 }}>
+                                {[
+                                  { l: "Weekly Midpoint", v: fmtAxis(ch.midpoint) },
+                                  { l: "Weekly Max Spend", v: fmtAxis(ch.max_spend) },
+                                  { l: "Scaling Ratio", v: fmtAxisN(ch.scaling_ratio) },
+                                  { l: "Slope", v: ch.slope.toFixed(2) },
+                                ].map(p => (
+                                  <div key={p.l} style={{ background: "#fff", borderRadius: 6, padding: "6px 10px", border: "1px solid #E5E7EB" }}>
+                                    <div style={{ fontSize: 9, color: "#9CA3AF", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>{p.l}</div>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#5A5F6B", marginTop: 1 }}>{p.v}</div>
                                   </div>
-                                )}
+                                ))}
+                              </div>
+                              <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 8 }}>
+                                Model: {BCP_LABELS[f.bcp] || f.bcp} level
                               </div>
                             </div>
                           </td>
@@ -702,7 +563,7 @@ export default function App() {
             <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "20px 24px", marginBottom: 24 }}>
               <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Channel Breakdown</div>
               <div style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 20 }}>
-                Revenue and units estimated from S-curves. {funnel === "best" ? "Using best available (most specific) funnel level per channel." : `Showing ${BCP_LABELS[funnel]} funnel only.`}
+                Revenue and units estimated from S-curves using the best available model per channel.
               </div>
 
               {active.length === 0 ? (
@@ -772,9 +633,6 @@ export default function App() {
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={downloadSummary} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Be Vietnam Pro'", background: "#fff", color: "#1B1F27", border: "1px solid #E5E7EB" }}>
                         Download Summary CSV
-                      </button>
-                      <button onClick={downloadDetail} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Be Vietnam Pro'", background: "#1B1F27", color: "#fff", border: "none" }}>
-                        Download by Funnel CSV
                       </button>
                     </div>
                   </div>
